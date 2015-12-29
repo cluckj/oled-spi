@@ -1,12 +1,13 @@
 var i2c = require('i2c');
+var spi = require('pi-spi');
 
 var Oled = function(opts) {
 
   this.HEIGHT = opts.height || 32;
   this.WIDTH = opts.width || 128;
   this.ADDRESS = opts.address || 0x3C;
-  this.PROTOCOL = 'I2C';
-
+  this.PROTOCOL = (opts.address) ? 'I2C' : 'SPI';
+  
   // create command buffers
   this.DISPLAY_OFF = 0xAE;
   this.DISPLAY_ON = 0xAF;
@@ -64,10 +65,18 @@ var Oled = function(opts) {
     }
   };
 
-  // Setup i2c
-  console.log('this.ADDRESS: ' + this.ADDRESS);
-  this.wire = new i2c(this.ADDRESS, {device: '/dev/i2c-0'}); // point to your i2c address, debug provides REPL interface
-
+  // Setup transfer protocol
+  if (this.PROTOCOL === 'I2C') {
+    // i2c
+    console.log('this.ADDRESS: ' + this.ADDRESS);
+    this.wireI2C = new i2c(this.ADDRESS, {device: '/dev/i2c-0'}); // point to your i2c address, debug provides REPL interface
+  }
+  else {
+    // spi
+    this.wireSPI = spi.initialize("/dev/spidev0.0");
+    // TBI PIN setup
+  }
+  
   var screenSize = this.WIDTH + 'x' + this.HEIGHT;
   this.screenConfig = config[screenSize];
 
@@ -117,19 +126,29 @@ Oled.prototype._transfer = function(type, val, fn) {
 
   // send control and actual val
   // this.board.io.i2cWrite(this.ADDRESS, [control, val]);
-  this.wire.writeByte(control, function(err) {
-    this.wire.writeByte(val, function(err) {
-      fn();
+  if (this.PROTOCOL === 'I2C') {
+    this.wireI2C.writeByte(control, function(err) {
+      this.wireI2C.writeByte(val, function(err) {
+        fn();
+      });
     });
-  });
+  }
+  else {
+    // TBI SPI
+  }
 }
 
 // read a byte from the oled
-Oled.prototype._readI2C = function(fn) {
-  this.wire.readByte(function(err, data) {
-    // result is single byte
-    fn(data);
-  });
+Oled.prototype._readByte = function(fn) {
+  if (this.PROTOCOL === 'I2C') {
+    this.wireI2C.readByte(function(err, data) {
+      // result is single byte
+      fn(data);
+    });
+  }
+  else {
+    // TBI
+  }
 }
 
 // sometimes the oled gets a bit busy with lots of bytes.
@@ -139,7 +158,7 @@ Oled.prototype._waitUntilReady = function(callback) {
       oled = this;
 
   function tick(callback) {
-    oled._readI2C(function(byte) {
+    oled._readByte(function(byte) {
       // read the busy byte in the response
       busy = byte >> 7 & 1;
       if (!busy) {
