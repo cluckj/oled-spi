@@ -1,12 +1,13 @@
-var i2c = require('i2c');
 var spi = require('pi-spi');
+var Gpio = require('onoff').Gpio;
+var async = require('async');
 
 var Oled = function(opts) {
 
   this.HEIGHT = opts.height || 32;
   this.WIDTH = opts.width || 128;
-  this.ADDRESS = opts.address || 0x3C;
-  this.PROTOCOL = (opts.address) ? 'I2C' : 'SPI';
+  this.dcPinNumber = opts.dcPin;
+  this.rstPinNumber = opts.rstPin;
   
   // create command buffers
   this.DISPLAY_OFF = 0xAE;
@@ -16,7 +17,7 @@ var Oled = function(opts) {
   this.SET_DISPLAY_OFFSET = 0xD3;
   this.SET_START_LINE = 0x00;
   this.CHARGE_PUMP = 0x8D;
-  this.EXTERNAL_VCC = false;
+  this.EXTERNAL_VCC = 0x1;
   this.MEMORY_MODE = 0x20;
   this.SEG_REMAP = 0xA1; // using 0xA0 will flip screen
   this.COM_SCAN_DEC = 0xC8;
@@ -45,8 +46,10 @@ var Oled = function(opts) {
   this.buffer = new Buffer((this.WIDTH * this.HEIGHT) / 8);
   this.buffer.fill(0x00);
 
-  this.dirtyBytes = [];
-
+  this.previousBuffer = new Buffer((this.WIDTH * this.HEIGHT) / 8);
+  this.previousBuffer.fill(0x00);
+  this.updateInProgress = false;
+  
   var config = {
     '128x32': {
       'multiplex': 0x1F,
@@ -64,26 +67,34 @@ var Oled = function(opts) {
       'coloffset': 0,
     }
   };
-
-  // Setup transfer protocol
-  if (this.PROTOCOL === 'I2C') {
-    // i2c
-    console.log('this.ADDRESS: ' + this.ADDRESS);
-    this.wireI2C = new i2c(this.ADDRESS, {device: '/dev/i2c-0'}); // point to your i2c address, debug provides REPL interface
-  }
-  else {
-    // spi
-    this.wireSPI = spi.initialize("/dev/spidev0.0");
-    // TBI PIN setup
-  }
   
   var screenSize = this.WIDTH + 'x' + this.HEIGHT;
   this.screenConfig = config[screenSize];
-
-  this._initialise();
+  
+  // Setup transfer protocol
+  this.wireSPI = spi.initialize("/dev/spidev0.0");
+  this.dcPin = new Gpio(this.dcPinNumber, 'low');
+  this.rstPin = new Gpio(this.rstPinNumber, 'high');
 }
 
-Oled.prototype._initialise = function() {
+Oled.prototype.begin = function(fn) {
+  var that = this;
+  setTimeout(function(){
+    that.reset(function(){
+      that._initialise(function(){
+        if (typeof(fn) == "function") fn();
+      });
+  });
+  }, 1);
+}
+
+Oled.prototype.end = function() {
+  this.dcPin.unexport();
+  this.rstPin.unexport();
+
+}
+
+Oled.prototype._initialise = function(fn) {
 
   // sequence of bytes to initialise with
   var initSeq = [
@@ -104,74 +115,50 @@ Oled.prototype._initialise = function() {
     this.NORMAL_DISPLAY,
     this.DISPLAY_ON
   ];
-
-  var i, initSeqLen = initSeq.length;
-
+  
   // write init seq commands
-  for (i = 0; i < initSeqLen; i ++) {
-    this._transfer('cmd', initSeq[i]);
-  }
+  this._transferCommandSeq(initSeq, function(){
+    console.log('Initialisation completed');
+    if (typeof(fn) == "function") fn();
+  });
 }
 
-// writes both commands and data buffers to this device
-Oled.prototype._transfer = function(type, val, fn) {
-  var control;
-  if (type === 'data') {
-    control = 0x40;
-  } else if (type === 'cmd') {
-    control = 0x00;
-  } else {
-    return;
-  }
+Oled.prototype._transferCommandSeq = function(cmdSeq, fn) {
+  this.wireSPI.write(new Buffer(cmdSeq), function(err, d) {
+      if (err) console.error(err, d);
+      if (typeof(fn) == "function") fn();
+    });
+}
 
-  // send control and actual val
-  // this.board.io.i2cWrite(this.ADDRESS, [control, val]);
-  if (this.PROTOCOL === 'I2C') {
-    this.wireI2C.writeByte(control, function(err) {
-      this.wireI2C.writeByte(val, function(err) {
-        fn();
+Oled.prototype._transferData = function(data, fn) {
+  var that = this;
+  this.dcPin.write(1, function(err){
+    that.wireSPI.write(data, function(err, d){
+      if (err) console.error(err, d);
+      that.dcPin.write(0, function(err){
+        if (err) console.error(err);
+        if (typeof(fn) == "function") fn();
       });
     });
-  }
-  else {
-    // TBI SPI
-  }
+  });
 }
 
-// read a byte from the oled
-Oled.prototype._readByte = function(fn) {
-  if (this.PROTOCOL === 'I2C') {
-    this.wireI2C.readByte(function(err, data) {
-      // result is single byte
-      fn(data);
-    });
-  }
-  else {
-    // TBI
-  }
-}
-
-// sometimes the oled gets a bit busy with lots of bytes.
-// Read the response byte to see if this is the case
-Oled.prototype._waitUntilReady = function(callback) {
-  var done,
-      oled = this;
-
-  function tick(callback) {
-    oled._readByte(function(byte) {
-      // read the busy byte in the response
-      busy = byte >> 7 & 1;
-      if (!busy) {
-        // if not busy, it's ready for callback
-        callback();
-      } else {
-        console.log('I\'m busy!');
-        setTimeout(tick, 0);
-      }
-    });
-  };
-
-  setTimeout(tick(callback), 0);
+Oled.prototype.reset = function(fn) {
+  var that = this;
+  async.series([
+    function(callback){
+      that.rstPin.write(0,callback);
+    },
+    function(callback){
+      setTimeout(callback, 10);
+    },
+    function(callback){
+      that.rstPin.write(1,callback);
+    }
+  ], function(err){
+    if (err) console.error(err);
+    if (typeof(fn) == "function") fn();
+  });
 }
 
 // set starting position of a text string on the oled
@@ -227,7 +214,7 @@ Oled.prototype.writeString = function(font, size, string, color, wrap, sync) {
     }
   }
   if (immed) {
-    this._updateDirtyBytes(this.dirtyBytes);
+    this.update();
   }
 }
 
@@ -291,31 +278,38 @@ Oled.prototype._findCharBuf = function(font, c) {
 
 // send the entire framebuffer to the oled
 Oled.prototype.update = function() {
-  // wait for oled to be ready
-  this._waitUntilReady(function() {
-    // set the start and endbyte locations for oled display update
-    var displaySeq = [
+  // Exit if buffer has not changed since last update
+  if (this.buffer.toString() === this.previousBuffer.toString()) {
+    return;
+  }
+  
+  // Exit if another update is in progress, update will be triggered afterwards
+  if (this.updateInProgress) {
+    return;
+  }
+  
+  this.updateInProgress = true;
+  
+  // Store current buffer as reference
+  this.previousBuffer = new Buffer (this.buffer);
+  
+  // set the start and endbyte locations for oled display update
+  var displaySeq = [
       this.COLUMN_ADDR,
       this.screenConfig.coloffset,
       this.screenConfig.coloffset + this.WIDTH - 1, // column start and end address
       this.PAGE_ADDR, 0, (this.HEIGHT / 8) - 1 // page start and end address
-    ];
+  ];
 
-    var displaySeqLen = displaySeq.length,
-        bufferLen = this.buffer.length,
-        i, v;
-
-    // send intro seq
-    for (i = 0; i < displaySeqLen; i += 1) {
-      this._transfer('cmd', displaySeq[i]);
-    }
-
+  // send intro seq
+  var that = this;
+  this._transferCommandSeq(displaySeq, function(){
     // write buffer data
-    for (v = 0; v < bufferLen; v += 1) {
-      this._transfer('data', this.buffer[v]);
-    }
-
-  }.bind(this));
+    that._transferData(that.buffer, function(){
+      that.updateInProgress = false;
+      that.update();
+    });
+  });
 }
 
 // send dim display command to oled
@@ -327,53 +321,42 @@ Oled.prototype.dimDisplay = function(bool) {
   } else {
     contrast = 0xCF; // Bright display
   }
-
-  this._transfer('cmd', this.SET_CONTRAST);
-  this._transfer('cmd', contrast);
+  this._transferCommandSeq([this.SET_CONTRAST, contrast]);
 }
 
 // turn oled off
 Oled.prototype.turnOffDisplay = function() {
-  this._transfer('cmd', this.DISPLAY_OFF);
+  this._transferCommandSeq([this.DISPLAY_OFF]);
 }
 
 // turn oled on
 Oled.prototype.turnOnDisplay = function() {
-  this._transfer('cmd', this.DISPLAY_ON);
+  this._transferCommandSeq([this.DISPLAY_ON]);
 }
 
 // clear all pixels currently on the display
 Oled.prototype.clearDisplay = function(sync) {
   var immed = (typeof sync === 'undefined') ? true : sync;
   // write off pixels
-  //this.buffer.fill(0x00);
-  for (var i = 0; i < this.buffer.length; i += 1) {
-    if (this.buffer[i] !== 0x00) {
-      this.buffer[i] = 0x00;
-      if (this.dirtyBytes.indexOf(i) === -1) {
-        this.dirtyBytes.push(i);
-      }
-    }
-  }
+  this.buffer.fill(0x00);
   if (immed) {
-    this._updateDirtyBytes(this.dirtyBytes);
+    this.update();
   }
 }
 
 // invert pixels on oled
 Oled.prototype.invertDisplay = function(bool) {
   if (bool) {
-    this._transfer('cmd', this.INVERT_DISPLAY); // inverted
+    this._transferCommandSeq([this.INVERT_DISPLAY]); // inverted
   } else {
-    this._transfer('cmd', this.NORMAL_DISPLAY); // non inverted
+    this._transferCommandSeq([this.NORMAL_DISPLAY]); // non inverted
   }
 }
 
 // draw an image pixel array on the screen
 Oled.prototype.drawBitmap = function(pixels, sync) {
   var immed = (typeof sync === 'undefined') ? true : sync;
-  var x, y,
-      pixelArray = [];
+  var x, y;
 
   for (var i = 0; i < pixels.length; i++) {
     x = Math.floor(i % this.WIDTH);
@@ -383,7 +366,7 @@ Oled.prototype.drawBitmap = function(pixels, sync) {
   }
 
   if (immed) {
-    this._updateDirtyBytes(this.dirtyBytes);
+    this.update();
   }
 }
 
@@ -417,59 +400,11 @@ Oled.prototype.drawPixel = function(pixels, sync) {
       this.buffer[byte] |= pageShift;
     }
 
-    // push byte to dirty if not already there
-    if (this.dirtyBytes.indexOf(byte) === -1) {
-      this.dirtyBytes.push(byte);
-    }
-
   }, this);
 
   if (immed) {
-    this._updateDirtyBytes(this.dirtyBytes);
-  }
-}
-
-// looks at dirty bytes, and sends the updated bytes to the display
-Oled.prototype._updateDirtyBytes = function(byteArray) {
-  var blen = byteArray.length, i,
-      displaySeq = [];
-
-  // check to see if this will even save time
-  if (blen > (this.buffer.length / 7)) {
-    // just call regular update at this stage, saves on bytes sent
     this.update();
-    // now that all bytes are synced, reset dirty state
-    this.dirtyBytes = [];
-
-  } else {
-
-    this._waitUntilReady(function() {
-      // iterate through dirty bytes
-      for (var i = 0; i < blen; i += 1) {
-
-        var byte = byteArray[i];
-        var page = Math.floor(byte / this.WIDTH);
-        var col = Math.floor(byte % this.WIDTH);
-
-        var displaySeq = [
-          this.COLUMN_ADDR, col, col, // column start and end address
-          this.PAGE_ADDR, page, page // page start and end address
-        ];
-
-        var displaySeqLen = displaySeq.length, v;
-
-        // send intro seq
-        for (v = 0; v < displaySeqLen; v += 1) {
-          this._transfer('cmd', displaySeq[v]);
-        }
-        // send byte, then move on to next byte
-        this._transfer('data', this.buffer[byte]);
-        this.buffer[byte];
-      }
-    }.bind(this));
   }
-  // now that all bytes are synced, reset dirty state
-  this.dirtyBytes = [];
 }
 
 // using Bresenham's line algorithm
@@ -492,7 +427,7 @@ Oled.prototype.drawLine = function(x0, y0, x1, y1, color, sync) {
   }
 
   if (immed) {
-    this._updateDirtyBytes(this.dirtyBytes);
+    this.update();
   }
 }
 
@@ -505,7 +440,7 @@ Oled.prototype.fillRect = function(x, y, w, h, color, sync) {
     this.drawLine(i, y, i, y+h-1, color, false);
   }
   if (immed) {
-    this._updateDirtyBytes(this.dirtyBytes);
+    this.update();
   }
 }
 
@@ -537,26 +472,19 @@ Oled.prototype.startScroll = function(dir, start, stop) {
       break;
   }
 
-  this._waitUntilReady(function() {
-    cmdSeq.push(
-      0x00, start,
-      0x00, stop,
-      // TODO: these need to change when diagonal
-      0x00, 0xFF,
-      this.ACTIVATE_SCROLL
-    );
-
-    var i, cmdSeqLen = cmdSeq.length;
-
-    for (i = 0; i < cmdSeqLen; i += 1) {
-      this._transfer('cmd', cmdSeq[i]);
-    }
-  }.bind(this));
+  cmdSeq.push(
+    0x00, start,
+    0x00, stop,
+    // TODO: these need to change when diagonal
+    0x00, 0xFF,
+    this.ACTIVATE_SCROLL
+  );
+  this._transferCommandSeq(cmdSeq);
 }
 
 // stop scrolling display contents
 Oled.prototype.stopScroll = function() {
-  this._transfer('cmd', this.DEACTIVATE_SCROLL); // stahp
+  this._transferCommandSeq([this.DEACTIVATE_SCROLL]); // stahp
 }
 
 module.exports = Oled;
