@@ -1,10 +1,9 @@
 {
-  "name": "oled-js-pi",
-  "version": "1.0.5",
+  "name": "oled-spi",
+  "version": "1.0.0",
   "description": "NodeJS module for controlling oled devices on the Raspbery Pi (including the SSD1306 OLED screens)",
   "main": "oled.js",
   "dependencies": {
-    "i2c": "~0.2.1",
     "pi-spi" : "~1.0.1",
     "onoff" : "~1.0.3",
     "async" : "~1.5.0"
@@ -20,19 +19,20 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/kd7yva/oled-js-pi.git"
+    "url": "https://github.com/AntoineHZ/oled-spi.git"
   },
   "keywords": [
     "Raspbery Pi",
     "Pi",
+    "spi",
     "NodeJS",
     "oled",
     "SSD1306"
   ],
-  "author": ["Judd Flamm", "Suz Hinton"],
+  "author": ["Antoine Heuze", "Judd Flamm", "Suz Hinton"],
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/kd7yva/oled-js-pi/issues"
+    "url": "https://github.com/AntoineHZ/oled-spi/issues"
   },
-  "homepage": "https://github.com/kd7yva/oled-js-pi"
+  "homepage": "https://github.com/AntoineHZ/oled-spi"
 }
