@@ -1,46 +1,51 @@
-![‘npm version’](http://img.shields.io/npm/v/oled-js.svg?style=flat) ![‘downloads over month’](http://img.shields.io/npm/dm/oled-js.svg?style=flat)
-
-OLED JS Pi
+OLED SPI
 ========================
-
-![oled-cat](http://f.cl.ly/items/2G041X2C1o2A1n2D3S18/cat-oled.png)
 
 ## What is this?
 
-A NodeJS driver for I2C/SPI compatible monochrome OLED screens; to be used on the Raspberry Pi! Works with 128 x 32, 128 x 64 and 96 x 16 sized screens, of the SSD1306 OLED/PLED Controller (read the [datasheet here](http://www.adafruit.com/datasheets/SSD1306.pdf)).
+A NodeJS async library for SPI compatible monochrome OLED screens; to be used on the Raspberry Pi! Works with 128 x 32, 128 x 64 and 96 x 16 sized screens, of the SSD1306 OLED/PLED Controller (read the [datasheet here](http://www.adafruit.com/datasheets/SSD1306.pdf)).
 
-This based on the Blog Post and code by Suz Hinton - [Read her blog post about how OLED screens work](http://meow.noopkat.com/oled-js/)!
-
-OLED screens are really cool - now you can control them with JavaScript!
+This is based on code by Suz Hinton and Judd Flamm.
 
 ## Install
 
 If you haven't already, install [NodeJS](http://nodejs.org/).
 
-`npm install oled-js-pi`
+`npm install oled-spi`
 
-## I2C screens
-Hook up I2C compatible oled to the Raspberry Pi. Pins: SDL and SCL
+## SPI screens
+Hook up SPI compatible oled to the Raspberry Pi. This library should also work with other SPI enabled computers (BeagleBone Black...), however so far it was only tested on Raspberry Pi.
 
-### I2C example
+Wiring on the Raspberry Pi should be done as follow:
+
++ OLED Data (or D1) to MOSI
++ OLED Clk (or D0) to SCLK
++ OLED DC to GPIO 23 (or any other free GPIO)
++ OLED Rst to GPIO 24 (or any other free GPIO)
++ OLED CS to CE0
++ OLED Vin (or VCC) to 3.3 volt
++ OLED GND to ground
+
+### Example
 
 ```javascript
-var oled = require('oled-js-pi');
+var oled = require('oled-spi');
 
 var opts = {
   width: 128,
   height: 64,
-  address: 0x3D
+  dcPin: 23,
+  rstPin : 24
 };
 
 var oled = new oled(opts);
+oled.begin(function(){
+  // do cool oled things here
+  
+});
 
-// do cool oled things here
 
 ```
-
-### Wait, how do I find out the I2C address of my OLED screen?
-Check your screen's documentation...
 
 ## Available methods
 
