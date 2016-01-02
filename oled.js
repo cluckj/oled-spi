@@ -6,8 +6,9 @@ var Oled = function(opts) {
 
   this.HEIGHT = opts.height || 32;
   this.WIDTH = opts.width || 128;
-  this.dcPinNumber = opts.dcPin;
-  this.rstPinNumber = opts.rstPin;
+  this.dcPinNumber = opts.dcPin || 23;
+  this.rstPinNumber = opts.rstPin || 24;
+  this.device = opts.device || "/dev/spidev0.0";
   
   // create command buffers
   this.DISPLAY_OFF = 0xAE;
@@ -72,13 +73,13 @@ var Oled = function(opts) {
   this.screenConfig = config[screenSize];
   
   // Setup transfer protocol
-  this.wireSPI = spi.initialize("/dev/spidev0.0");
-  this.dcPin = new Gpio(this.dcPinNumber, 'low');
-  this.rstPin = new Gpio(this.rstPinNumber, 'high');
+  this.wireSPI = spi.initialize(this.device);
 }
 
 Oled.prototype.begin = function(fn) {
   var that = this;
+  this.dcPin = new Gpio(this.dcPinNumber, 'low');
+  this.rstPin = new Gpio(this.rstPinNumber, 'high');
   setTimeout(function(){
     that.reset(function(){
       that._initialise(function(){
@@ -91,7 +92,6 @@ Oled.prototype.begin = function(fn) {
 Oled.prototype.end = function() {
   this.dcPin.unexport();
   this.rstPin.unexport();
-
 }
 
 Oled.prototype._initialise = function(fn) {
@@ -118,7 +118,6 @@ Oled.prototype._initialise = function(fn) {
   
   // write init seq commands
   this._transferCommandSeq(initSeq, function(){
-    console.log('Initialisation completed');
     if (typeof(fn) == "function") fn();
   });
 }
