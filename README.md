@@ -47,6 +47,23 @@ oled.begin(function(){
 
 ```
 
+### Using multiple SPI devices
+You can set the SPI device through the options:
+```javascript
+...
+
+var opts = {
+  width: 128,
+  height: 64,
+  dcPin: 23,
+  rstPin : 24,
+  device: "/dev/spidev0.0"
+};
+
+...
+
+```
+
 ## Available methods
 
 ### clearDisplay
